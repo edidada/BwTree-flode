@@ -17,15 +17,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # CMakeLists.txt links against `tbb` and epoque.hpp includes
-      # tbb/enumerable_thread_specific.h and tbb/combinable.h.
-      - name: Install toolchain
+      # cmake/g++ are preinstalled; only TBB is needed. The runner's default
+      # apt mirror (azure.archive.ubuntu.com) may not resolve, so point apt at
+      # the public mirrors; if apt is unavailable entirely, build oneTBB from
+      # source (github.com is reachable).
+      - name: Install TBB
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ cmake libtbb-dev
+          echo "deb http://archive.ubuntu.com/ubuntu jammy main universe" | sudo tee /etc/apt/sources.list
+          echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb http://security.ubuntu.com/ubuntu jammy-security main universe" | sudo tee -a /etc/apt/sources.list
+          sudo rm -f /etc/apt/apt-mirrors.txt
+          if ! sudo apt-get -o Acquire::Retries=2 update || \
+             ! sudo apt-get -o Acquire::Retries=2 install -y --no-install-recommends libtbb-dev; then
+            echo "apt unavailable; building oneTBB from source"
+            git clone --depth 1 --branch v2021.5.0 https://github.com/oneapi-src/oneTBB.git /tmp/oneTBB
+            cmake -S /tmp/oneTBB -B /tmp/oneTBB/build -DTBB_TEST=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/tbb-install -DCMAKE_INSTALL_LIBDIR=lib
+            cmake --build /tmp/oneTBB/build --parallel 2
+            cmake --install /tmp/oneTBB/build
+            echo "CPLUS_INCLUDE_PATH=/tmp/tbb-install/include" >> "$GITHUB_ENV"
+            echo "LIBRARY_PATH=/tmp/tbb-install/lib" >> "$GITHUB_ENV"
+            echo "LD_LIBRARY_PATH=/tmp/tbb-install/lib" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_CXX_FLAGS="-include cstdio -include cstdint -include array -include limits -include chrono"
 
       - name: Build
         run: cmake --build build --parallel 2
