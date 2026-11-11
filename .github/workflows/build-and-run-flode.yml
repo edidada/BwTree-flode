@@ -1,0 +1,47 @@
+name: Build and Run (flode)
+
+on:
+  push:
+    branches:
+      - 'edidada/**'
+  pull_request:
+    branches:
+      - 'edidada/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # CMakeLists.txt links against `tbb` and epoque.hpp includes
+      # tbb/enumerable_thread_specific.h and tbb/combinable.h.
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ cmake libtbb-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      # main() runs a long benchmark (up to 42M keys x 8 threads), so CI
+      # only does a bounded smoke run: start the binary, confirm it does not
+      # crash, and stop it after a few seconds.
+      - name: Smoke run
+        run: |
+          set +e
+          timeout 15s ./build/BwTree > /tmp/bwtree-smoke.log 2>&1
+          rc=$?
+          head -n 10 /tmp/bwtree-smoke.log
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+            echo "BwTree started successfully (smoke run, exit=$rc)"
+          else
+            echo "BwTree failed with exit=$rc"
+            exit "$rc"
+          fi
